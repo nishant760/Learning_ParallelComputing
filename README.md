@@ -1,16 +1,31 @@
-# AI-Assisted Parallel Numerical Computation and Scheduling Using C/OpenMP
+# AI-Assisted OpenMP Scheduling for Parallel Numerical Computation
 
-A student-developed parallel computing project for numerical integration ($\pi$ calculation) using C, OpenMP, and Machine Learning (Random Forest) to predict and recommend optimal thread and loop scheduling configurations.
+A student-developed parallel computing project demonstrating workload-aware OpenMP performance tuning using C, OpenMP multi-threading, and Machine Learning (Random Forest Regression).
+
+> **Note**: Midpoint numerical integration of $\pi = \int_0^1 \frac{4}{1+x^2} dx$ is the computational workload used to study OpenMP performance tuning.
 
 ---
 
-## 📌 Project Overview
+## 📌 Project Overview & Workflow
 
-Numerical integration for calculating $\pi$ via the midpoint rule:
+1. **Input**: Workload iteration count $N$.
+2. **Parameters**: Thread count (2, 4, 8), Schedule strategy (`static`, `dynamic`, `guided`), Chunk size (100, 1000, 10000).
+3. **Benchmarking**: Execute C/OpenMP numerical routines (1 warm-up run + 5 measured runs per config, taking median time).
+4. **Dataset**: Empirical performance stored in `data/performance.csv`.
+5. **Machine Learning**: Train Random Forest Regressor to predict speedup $(N, \text{threads}, \text{schedule}, \text{chunk}) \to \text{speedup}$.
+6. **AI Scheduler**: Rank 27 candidate configurations for target $N$ and recommend optimal settings.
+7. **Validation**: Execute recommended C/OpenMP configuration live and compare **Predicted** vs **Measured** speedup.
 
-$$\pi = \int_0^1 \frac{4}{1+x^2} \, dx$$
+---
 
-is computationally intensive for large iteration counts ($N \ge 100,000,000$). This project parallelizes the computation across multi-core processors using OpenMP in C. Because parallel performance depends non-linearly on thread counts, loop scheduling strategies (`static`, `dynamic`, `guided`), and chunk sizes, we train a **Random Forest Regressor** on empirical benchmark data to predict speedup and automatically recommend optimal thread and scheduling parameters for unseen workloads.
+## 🏗️ Architecture Flow
+
+```text
+User Workload N ──> Candidate Configs ──> Random Forest Model ──> Top Recommendation
+                                                                         │
+                                                                         v
+Predicted vs Measured Speedup Validation <── Speedup Metrics <── Live C/OpenMP Execution
+```
 
 ---
 
@@ -19,119 +34,72 @@ is computationally intensive for large iteration counts ($N \ge 100,000,000$). T
 ```
 ParallelComputing/
 ├── src/
-│   ├── sequential_pi.c   # Baseline single-threaded C implementation
-│   ├── parallel_pi.c     # Multi-threaded OpenMP C implementation with reduction
-│   └── benchmark.c       # Empirical benchmarking suite for performance dataset
+│   ├── sequential_pi.c          # Single-threaded baseline C implementation (T1)
+│   ├── parallel_pi.c            # Multi-threaded OpenMP C implementation with reduction
+│   └── benchmark.c              # Empirical benchmarking suite (warmup + median timing)
 ├── ai/
-│   ├── train_model.py    # Random Forest training on benchmark dataset
-│   ├── ai_scheduler.py   # AI scheduler and live prediction-vs-actual validator
-│   └── visualize.py      # Matplotlib performance plot generator
+│   ├── train_model.py           # Random Forest Regressor (GroupKFold + N=75M holdout)
+│   ├── ai_scheduler.py          # AI scheduler & live execution validator
+│   ├── compare_schedules.py     # Live comparison tool for all OpenMP schedules
+│   └── visualize.py             # Matplotlib graph generator
 ├── data/
-│   └── performance.csv   # Real empirical benchmark dataset (N, threads, schedule, chunk, etc.)
+│   └── performance.csv          # Empirical benchmark dataset (median times, speedups, etc.)
 ├── model/
-│   └── speedup_model.pkl # Trained Scikit-Learn Random Forest pipeline
-├── results/              # Generated high-resolution performance plots
-│   ├── execution_time_vs_threads.png
-│   ├── speedup_vs_threads.png
-│   ├── efficiency_vs_threads.png
-│   ├── schedule_comparison.png
-│   ├── workload_scaling.png
-│   └── predicted_vs_actual.png
+│   └── speedup_model.pkl        # Saved Scikit-Learn Random Forest pipeline
+├── results/                     # Performance plot charts
 ├── report/
-│   ├── project_report.md          # Comprehensive academic project report
-│   ├── viva_questions_answers.md  # 25+ Viva Voce questions & detailed answers
-│   └── presentation_synopsis.md   # Presentation / PPT slide synopsis
-├── app.py                # Academic Streamlit UI interface
-├── Makefile              # Build automation for C programs & python workflows
-└── README.md             # Project documentation and guide
+│   ├── project_report.md         # Academic project report
+│   ├── viva_questions_answers.md # Viva Voce Q&As
+│   ├── presentation_synopsis.md  # Presentation synopsis
+│   └── demo_guide.md            # Step-by-step professor demonstration guide
+├── app.py                       # Streamlit UI dashboard
+├── Makefile                     # Build & run automation script
+├── requirements.txt             # Minimal Python dependencies
+└── README.md                    # Project guide
 ```
 
 ---
 
-## ⚙️ Prerequisites & Installation
+## ⚙️ Installation & Commands
 
-### Requirements
-- **C Compiler**: GCC with OpenMP support (`gcc-16`, `gcc-14`, or GCC 10+)
-- **Python**: Version 3.10+
-- **Python Libraries**: `numpy`, `pandas`, `scikit-learn`, `matplotlib`, `joblib`, `streamlit`
-
-### Virtual Environment Setup
 ```bash
+# 1. Environment & Dependencies
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt  # Or: pip install numpy pandas scikit-learn matplotlib joblib streamlit
-```
+pip install -r requirements.txt
 
----
-
-## 🚀 Compilation & Execution Guide
-
-### 1. Compile C Programs
-```bash
+# 2. Compile C binaries
 make all
-```
-Compiles `src/sequential_pi.c`, `src/parallel_pi.c`, and `src/benchmark.c` into `bin/`.
 
-### 2. Manual C Executions
-**Sequential:**
-```bash
-./bin/sequential_pi 100000000
-```
-
-**Parallel:**
-```bash
-# Usage: ./bin/parallel_pi [N] [threads] [schedule] [chunk_size]
-./bin/parallel_pi 100000000 4 static 1000
-./bin/parallel_pi 100000000 8 dynamic 10000
-```
-
-### 3. Run Benchmark Suite & Generate Empirical CSV
-```bash
+# 3. Run empirical benchmark suite (1 warmup + 5 measured runs per config)
 make run-benchmark
-```
-Runs 216 empirical workload combinations ($N \in \{1\text{M}, 10\text{M}, 20\text{M}, 50\text{M}, 75\text{M}, 100\text{M}\}$, Threads $\in \{1, 2, 4, 8\}$, Schedules $\in \{\text{static}, \text{dynamic}, \text{guided}\}$, Chunks $\in \{100, 1000, 10000\}$) and exports results to `data/performance.csv`.
 
-### 4. Train AI Speedup Model
-```bash
+# 4. Train Random Forest model (GroupKFold CV + N=75M holdout)
 make train
-```
-Trains a Random Forest Regressor, evaluates it on unseen workload sizes ($N = 75\text{M}$), and saves `model/speedup_model.pkl`.
 
-### 5. Run AI-Assisted Scheduler
-```bash
+# 5. Run quick AI scheduler demo (N = 50M)
+make demo
+
+# 6. Run AI scheduler for custom workload (e.g., N = 80M)
 ./venv/bin/python ai/ai_scheduler.py 80000000
-```
-Recommends optimal configuration for $N = 80\text{M}$, runs live C executables, and compares predicted vs actual speedup.
 
-### 6. Generate Performance Graphs
-```bash
+# 7. Generate performance graphs
 make visualize
-```
-Generates 6 PNG charts in `results/`.
 
-### 7. Launch Academic UI
-```bash
+# 8. Launch Streamlit web dashboard
 make app
-# Or: ./venv/bin/streamlit run app.py
 ```
-Opens interactive Streamlit dashboard at `http://localhost:8501`.
 
 ---
 
 ## 📊 Key Formulas
 
-1. **Midpoint Numerical Integration**:
-   $$\Delta x = \frac{1}{N}, \quad x_i = (i + 0.5) \cdot \Delta x, \quad \pi \approx \Delta x \cdot \sum_{i=0}^{N-1} \frac{4}{1 + x_i^2}$$
-
-2. **Speedup ($S$)**:
-   $$S = \frac{T_{\text{sequential}}}{T_{\text{parallel}}}$$
-
-3. **Parallel Efficiency ($E$)**:
-   $$E = \frac{S}{P} \times 100\%$$
-   where $P$ is the number of OpenMP threads.
+- **Midpoint Rule**: $h = \frac{1}{N}, \ x_i = (i + 0.5)h, \ \pi \approx h \sum_{i=0}^{N-1} \frac{4}{1 + x_i^2}$
+- **Speedup**: $S = \frac{T_{1,\text{median}}}{T_{p,\text{median}}}$
+- **Efficiency**: $E = \frac{S}{P} \times 100\%$
 
 ---
 
-## 📄 License & Student Declaration
+## 📄 Academic Note
 
-Developed as an academic case study for Parallel & Distributed Computing course laboratory work.
+> ⚠️ **Hardware Dependence Note**: Performance metrics and speedups are hardware-dependent for the current host system.

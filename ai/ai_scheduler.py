@@ -1,10 +1,10 @@
 # ai_scheduler.py
 # ------------------------------------------------------------------
-# Project: AI-Assisted Parallel Numerical Computation & Scheduling
-# Description: Smart AI scheduler that evaluates OpenMP thread and scheduling
-#              configurations using a trained Random Forest model.
-#              Recommends optimal settings for unseen workloads and compares
-#              predicted vs actual speedup via live C execution.
+# Project: AI-Assisted OpenMP Scheduling for Parallel Numerical Computation
+# Description: Smart AI scheduler that uses a trained Random Forest model to
+#              evaluate candidate configurations, recommend optimal settings,
+#              trigger live C OpenMP execution using warm-up + median methodology,
+#              and compare Predicted Performance vs Measured Performance.
 # ------------------------------------------------------------------
 
 import os
@@ -13,6 +13,9 @@ import subprocess
 import joblib
 import pandas as pd
 import numpy as np
+
+WARMUP_RUNS = 1
+MEASURED_RUNS = 5
 
 def run_c_executable(cmd_list):
     try:
@@ -30,6 +33,28 @@ def run_c_executable(cmd_list):
         print(f"Execution Error running {cmd_list}: {e}")
         return None, None
 
+def measure_c_median_time(cmd_list):
+    # 1. Warm-up run
+    for _ in range(WARMUP_RUNS):
+        run_c_executable(cmd_list)
+
+    # 2. Measured runs
+    times = []
+    pi_val = None
+    for _ in range(MEASURED_RUNS):
+        t, p = run_c_executable(cmd_list)
+        if t is not None:
+            times.append(t)
+            pi_val = p
+
+    if not times:
+        return None, None, None
+
+    median_t = float(np.median(times))
+    mean_t = float(np.mean(times))
+    stddev_t = float(np.std(times))
+    return median_t, mean_t, pi_val
+
 def schedule_workload(target_N=80000000):
     model_path = os.path.join("model", "speedup_model.pkl")
     seq_bin = os.path.join("bin", "sequential_pi")
@@ -45,7 +70,7 @@ def schedule_workload(target_N=80000000):
 
     model = joblib.load(model_path)
 
-    # Candidate configurations
+    # Phase 4 & 6: Candidate configurations (threads = [2, 4, 8])
     schedules = ['static', 'dynamic', 'guided']
     threads_list = [2, 4, 8]
     chunks = [100, 1000, 10000]
@@ -65,15 +90,14 @@ def schedule_workload(target_N=80000000):
     predicted_speedups = model.predict(candidates_df)
     candidates_df['predicted_speedup'] = predicted_speedups
 
-    # Sort candidates by predicted speedup
+    # Rank candidates by predicted speedup
     sorted_candidates = candidates_df.sort_values(by='predicted_speedup', ascending=False).reset_index(drop=True)
-
     top_config = sorted_candidates.iloc[0]
 
     print("\n=========================================================================")
     print(f" AI-ASSISTED OPENMP SCHEDULER (Target Workload N = {target_N:,})")
     print("=========================================================================")
-    print("\nTop 5 AI Predicted Optimal Configurations:")
+    print("\nTop 5 Ranked AI Candidates (by Predicted Speedup):")
     print(sorted_candidates.head(5)[['threads', 'schedule', 'chunk', 'predicted_speedup']].to_string(index=False))
 
     print("\n-------------------------------------------------------------------------")
@@ -81,45 +105,50 @@ def schedule_workload(target_N=80000000):
     print(f"   Threads            : {int(top_config['threads'])}")
     print(f"   Scheduling Strategy: {top_config['schedule'].upper()}")
     print(f"   Chunk Size         : {int(top_config['chunk'])}")
-    print(f"   Predicted Speedup  : {top_config['predicted_speedup']:.4f}x")
+    print(f"   Predicted Performance (Speedup) : {top_config['predicted_speedup']:.4f}x")
     print("-------------------------------------------------------------------------")
 
-    print("\n[LIVE EXECUTION] Triggering compiled C binaries to benchmark prediction...")
+    print(f"\n[LIVE EXECUTION] Running live C binaries ({WARMUP_RUNS} warm-up + {MEASURED_RUNS} measured runs)...")
 
-    # 1. Run Sequential
-    seq_time, seq_pi = run_c_executable([seq_bin, str(target_N)])
+    # 1. Measure Sequential Baseline Median Time
+    seq_cmd = [seq_bin, str(target_N)]
+    seq_median_time, _, seq_pi = measure_c_median_time(seq_cmd)
 
-    # 2. Run Parallel with Recommended Config
-    par_time, par_pi = run_c_executable([
+    # 2. Measure Parallel Recommended Config Median Time
+    par_cmd = [
         par_bin,
         str(target_N),
         str(int(top_config['threads'])),
         top_config['schedule'],
         str(int(top_config['chunk']))
-    ])
+    ]
+    par_median_time, _, par_pi = measure_c_median_time(par_cmd)
 
-    if seq_time is None or par_time is None:
-        print("[ERROR] Failed to measure actual execution time.")
+    if seq_median_time is None or par_median_time is None:
+        print("[ERROR] Failed to measure execution time.")
         sys.exit(1)
 
-    actual_speedup = seq_time / par_time
-    actual_efficiency = (actual_speedup / top_config['threads']) * 100.0
+    measured_actual_speedup = seq_median_time / par_median_time
+    measured_actual_efficiency = (measured_actual_speedup / top_config['threads']) * 100.0
     pred_speedup = top_config['predicted_speedup']
-    abs_error = abs(pred_speedup - actual_speedup)
-    pct_error = (abs_error / actual_speedup) * 100.0
+    abs_error = abs(pred_speedup - measured_actual_speedup)
+    pct_error = (abs_error / measured_actual_speedup) * 100.0
+    
+    exact_pi = 3.14159265358979323846
+    pi_err = abs(par_pi - exact_pi)
 
     print("\n=========================================================================")
-    print(" LIVE EXPERIMENTAL RESULTS vs AI PREDICTION")
+    print(" PREDICTED PERFORMANCE vs MEASURED PERFORMANCE")
     print("=========================================================================")
-    print(f" Calculated Pi (Sequential) : {seq_pi:.15f}")
-    print(f" Calculated Pi (Parallel)   : {par_pi:.15f}")
-    print(f" Sequential Execution Time  : {seq_time:.6f} s")
-    print(f" Parallel Execution Time    : {par_time:.6f} s")
-    print(f" Measured Actual Speedup    : {actual_speedup:.4f}x")
-    print(f" Measured Parallel Efficiency: {actual_efficiency:.2f}%")
-    print(f" AI Predicted Speedup       : {pred_speedup:.4f}x")
-    print(f" Absolute Prediction Error  : {abs_error:.4f}")
-    print(f" Percentage Error           : {pct_error:.2f}%")
+    print(f" Calculated Pi (Parallel)     : {par_pi:.15f}")
+    print(f" Negligible Floating-Pt Error : {pi_err:.15e}")
+    print(f" Sequential Median Time (T1)  : {seq_median_time:.6f} s")
+    print(f" Parallel Median Time (Tp)    : {par_median_time:.6f} s")
+    print(f" Predicted Performance        : {pred_speedup:.4f}x Speedup")
+    print(f" Measured Performance         : {measured_actual_speedup:.4f}x Speedup")
+    print(f" Measured Parallel Efficiency : {measured_actual_efficiency:.2f}%")
+    print(f" Prediction Absolute Error    : {abs_error:.4f}")
+    print(f" Prediction Percentage Error  : {pct_error:.2f}%")
     print("=========================================================================\n")
 
     return {
@@ -127,9 +156,9 @@ def schedule_workload(target_N=80000000):
         'recommended_threads': int(top_config['threads']),
         'recommended_schedule': top_config['schedule'],
         'recommended_chunk': int(top_config['chunk']),
-        'seq_time': seq_time,
-        'par_time': par_time,
-        'actual_speedup': actual_speedup,
+        'seq_time': seq_median_time,
+        'par_time': par_median_time,
+        'actual_speedup': measured_actual_speedup,
         'predicted_speedup': pred_speedup,
         'error': abs_error,
         'pct_error': pct_error

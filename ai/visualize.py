@@ -1,6 +1,6 @@
 # visualize.py
 # ------------------------------------------------------------------
-# Project: AI-Assisted Parallel Numerical Computation & Scheduling
+# Project: AI-Assisted OpenMP Scheduling for Parallel Numerical Computation
 # Description: Generates performance analysis graphs using matplotlib
 #              from empirical OpenMP benchmark dataset.
 # ------------------------------------------------------------------
@@ -11,7 +11,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import joblib
 
-# Set clean academic matplotlib style
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['Helvetica', 'Arial', 'DejaVu Sans']
 plt.rcParams['axes.edgecolor'] = '#333333'
@@ -20,10 +19,13 @@ plt.rcParams['axes.linewidth'] = 1.0
 def generate_plots():
     csv_path = os.path.join("data", "performance.csv")
     if not os.path.exists(csv_path):
-        raise FileNotFoundError("data/performance.csv missing. Run benchmark first.")
+        raise FileNotFoundError("data/performance.csv missing. Run 'make run-benchmark' first.")
 
     df = pd.read_csv(csv_path)
     os.makedirs("results", exist_ok=True)
+
+    # Use median_time column from revised CSV format
+    time_col = 'median_time' if 'median_time' in df.columns else 'execution_time'
 
     # Filter standard static schedule with chunk=1000 for standard thread scaling plots
     std_df = df[(df['schedule'] == 'static') & (df['chunk'] == 1000)].copy()
@@ -41,11 +43,11 @@ def generate_plots():
         sub = std_df[std_df['N'] == N_val]
         if not sub.empty:
             label_str = f"N = {N_val // 1000000}M" if N_val >= 1000000 else f"N = {N_val}"
-            plt.plot(sub['threads'], sub['execution_time'], marker='o', linewidth=2.0, color=colors[idx % len(colors)], label=label_str)
+            plt.plot(sub['threads'], sub[time_col], marker='o', linewidth=2.0, color=colors[idx % len(colors)], label=label_str)
 
-    plt.title("Execution Time vs. Thread Count", fontsize=13, fontweight='bold', pad=12)
+    plt.title("Median Execution Time vs. Thread Count", fontsize=13, fontweight='bold', pad=12)
     plt.xlabel("Number of OpenMP Threads", fontsize=11)
-    plt.ylabel("Execution Time (seconds)", fontsize=11)
+    plt.ylabel("Median Execution Time (seconds)", fontsize=11)
     plt.xticks([1, 2, 4, 8])
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend(title="Workload Size", frameon=True)
@@ -65,9 +67,9 @@ def generate_plots():
             label_str = f"N = {N_val // 1000000}M" if N_val >= 1000000 else f"N = {N_val}"
             plt.plot(sub['threads'], sub['speedup'], marker='s', linewidth=2.0, color=colors[idx % len(colors)], label=label_str)
 
-    plt.title("Speedup vs. Thread Count", fontsize=13, fontweight='bold', pad=12)
+    plt.title("Speedup vs. Thread Count (Median Baseline)", fontsize=13, fontweight='bold', pad=12)
     plt.xlabel("Number of OpenMP Threads", fontsize=11)
-    plt.ylabel("Speedup (S = T_seq / T_par)", fontsize=11)
+    plt.ylabel("Speedup (S = T1_median / Tp_median)", fontsize=11)
     plt.xticks([1, 2, 4, 8])
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend(title="Workload Size", frameon=True)
@@ -78,7 +80,7 @@ def generate_plots():
 
     # 3. Efficiency vs Threads
     plt.figure(figsize=(8, 5))
-    plt.axhline(100, color='k', linestyle='--', linewidth=1.5, label="100% Ideal Efficiency")
+    plt.axhline(100, color='k', linestyle='--', linewidth=1.5, label="100% Reference Efficiency")
 
     for idx, N_val in enumerate(main_sizes):
         sub = std_df[std_df['N'] == N_val]
@@ -90,7 +92,6 @@ def generate_plots():
     plt.xlabel("Number of OpenMP Threads", fontsize=11)
     plt.ylabel("Efficiency (%)", fontsize=11)
     plt.xticks([1, 2, 4, 8])
-    plt.ylim(0, 115)
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend(title="Workload Size", frameon=True)
     plt.tight_layout()
@@ -147,9 +148,9 @@ def generate_plots():
         plt.scatter(unseen_df['speedup'], unseen_df['predicted_speedup'], color='#d62728', alpha=0.8, edgecolors='k', s=60)
         min_val = min(unseen_df['speedup'].min(), unseen_df['predicted_speedup'].min())
         max_val = max(unseen_df['speedup'].max(), unseen_df['predicted_speedup'].max())
-        plt.plot([min_val, max_val], [min_val, max_val], 'k--', linewidth=1.5, label="Perfect 1:1 Prediction")
+        plt.plot([min_val, max_val], [min_val, max_val], 'k--', linewidth=1.5, label="1:1 Reference Line")
 
-        plt.title("AI Predicted vs. Actual Measured Speedup (Unseen N = 75M)", fontsize=13, fontweight='bold', pad=12)
+        plt.title("Predicted vs. Measured Speedup (Unseen N = 75M)", fontsize=13, fontweight='bold', pad=12)
         plt.xlabel("Empirical Measured Speedup", fontsize=11)
         plt.ylabel("Random Forest Predicted Speedup", fontsize=11)
         plt.grid(True, linestyle='--', alpha=0.6)

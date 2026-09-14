@@ -1,12 +1,13 @@
 # app.py
 # ------------------------------------------------------------------
-# Project: AI-Assisted Parallel Numerical Computation & Scheduling Using C/OpenMP
-# Description: Academic Streamlit UI for OpenMP Pi computations,
-#              parallel metrics evaluation, live schedule comparisons, and AI predictions.
+# Project: AI-Assisted OpenMP Scheduling for Parallel Numerical Computation
+# Description: Clean, concise academic Streamlit UI for OpenMP Pi computations,
+#              metrics evaluation, live schedule comparisons, and AI predictions.
 # ------------------------------------------------------------------
 
 import os
 import sys
+import platform
 import subprocess
 import streamlit as st
 import pandas as pd
@@ -16,30 +17,39 @@ import joblib
 os.environ['MPLCONFIGDIR'] = '/tmp'
 
 st.set_page_config(
-    page_title="AI-Assisted OpenMP Parallel Computing",
+    page_title="AI-Assisted OpenMP Computing",
     page_icon="⚡",
     layout="wide"
 )
 
-# Clean, high-contrast academic styling (No animations)
+# Clean academic CSS
 st.markdown("""
 <style>
     .main-title {
         font-size: 24px;
         font-weight: bold;
         color: #38BDF8;
-        margin-bottom: 12px;
+        margin-bottom: 4px;
     }
-    .academic-box {
-        background-color: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 6px;
-        padding: 16px;
+    .sub-title {
+        font-size: 13px;
+        color: #94A3B8;
         margin-bottom: 16px;
-        color: #F8FAFC;
+    }
+    .hw-note {
+        font-size: 11px;
+        color: #F59E0B;
+        background: rgba(245, 158, 11, 0.1);
+        border-left: 3px solid #F59E0B;
+        padding: 6px 10px;
+        border-radius: 4px;
+        margin-top: 8px;
     }
 </style>
 """, unsafe_allow_html=True)
+
+WARMUP_RUNS = 1
+MEASURED_RUNS = 5
 
 def run_c_binary(cmd_list):
     try:
@@ -55,6 +65,22 @@ def run_c_binary(cmd_list):
         st.error(f"Error running binary {cmd_list}: {e}")
         return None, None
 
+def measure_median_time(cmd_list):
+    for _ in range(WARMUP_RUNS):
+        run_c_binary(cmd_list)
+    
+    times = []
+    pi_val = None
+    for _ in range(MEASURED_RUNS):
+        t, p = run_c_binary(cmd_list)
+        if t is not None:
+            times.append(t)
+            pi_val = p
+            
+    if not times:
+        return None, None
+    return float(np.median(times)), pi_val
+
 def get_ai_recommendation(model, N):
     schedules = ['static', 'dynamic', 'guided']
     threads_list = [2, 4, 8]
@@ -68,35 +94,36 @@ def get_ai_recommendation(model, N):
 
     df_cand = pd.DataFrame(candidates)
     df_cand['predicted_speedup'] = model.predict(df_cand)
-    best = df_cand.sort_values(by='predicted_speedup', ascending=False).iloc[0]
-    return best
+    sorted_df = df_cand.sort_values(by='predicted_speedup', ascending=False).reset_index(drop=True)
+    return sorted_df
 
-# Main Layout Header
-st.markdown('<div class="main-title">AI-Assisted Parallel Numerical Computation & Scheduling</div>', unsafe_allow_html=True)
+# Header
+st.markdown('<div class="main-title">AI-Assisted OpenMP Parallel Computation & Scheduling</div>', unsafe_allow_html=True)
 
 seq_bin = os.path.join("bin", "sequential_pi")
 par_bin = os.path.join("bin", "parallel_pi")
 model_path = os.path.join("model", "speedup_model.pkl")
 
-# Verify prerequisites
+# Verify binaries
 if not os.path.exists(seq_bin) or not os.path.exists(par_bin):
-    st.warning("Compiled C binaries missing. Building executables via 'make all'...")
+    st.warning("Building C binaries via 'make all'...")
     subprocess.run(["make", "all"], check=True)
 
 model = None
 if os.path.exists(model_path):
     model = joblib.load(model_path)
 else:
-    st.error("AI model 'model/speedup_model.pkl' not found. Run 'make train' to train model.")
+    st.error("Model 'model/speedup_model.pkl' missing. Run 'make train'.")
 
 # Sidebar Controls
 st.sidebar.header("Experimental Parameters")
-input_N = st.sidebar.number_input("Workload Size (N steps)", min_value=100000, max_value=500000000, value=100000000, step=10000000)
-threads = st.sidebar.selectbox("Number of OpenMP Threads", options=[1, 2, 4, 8, 16], index=3)
+input_N = st.sidebar.number_input("Workload Size (N steps)", min_value=100000, max_value=500000000, value=50000000, step=10000000)
+
+threads = st.sidebar.selectbox("Number of OpenMP Threads", options=[1, 2, 4, 8], index=3)
 schedule = st.sidebar.selectbox("OpenMP Scheduling Strategy", options=["static", "dynamic", "guided"], index=0)
 chunk_size = st.sidebar.selectbox("Chunk Size", options=[100, 1000, 10000], index=1)
 
-run_button = st.sidebar.button("Run Parallel Computation & AI Prediction", type="primary")
+run_button = st.sidebar.button("Run Experiment & AI Prediction", type="primary")
 
 # Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -106,29 +133,34 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "Performance Graphs"
 ])
 
+# ------------------------------------------------------------------
+# TAB 1: SINGLE RUN & AI PREDICTION
+# ------------------------------------------------------------------
 with tab1:
     st.subheader("Live Execution & Performance Metrics")
     
     if run_button or 'last_run' not in st.session_state:
-        with st.spinner("Executing compiled C OpenMP binaries..."):
-            t_seq, pi_seq = run_c_binary([seq_bin, str(input_N)])
-            t_par, pi_par = run_c_binary([par_bin, str(input_N), str(threads), schedule, str(chunk_size)])
+        with st.spinner("Executing compiled C binaries (1 warmup + 5 measured runs)..."):
+            t_seq, pi_seq = measure_median_time([seq_bin, str(input_N)])
+            t_par, pi_par = measure_median_time([par_bin, str(input_N), str(threads), schedule, str(chunk_size)])
             
             if t_seq and t_par:
                 speedup = t_seq / t_par
                 efficiency = (speedup / threads) * 100.0
+                exact_pi = 3.14159265358979323846
+                pi_error = abs(pi_par - exact_pi)
                 
                 pred_speedup = None
                 best_config = None
                 if model:
                     user_df = pd.DataFrame([{'N': input_N, 'threads': threads, 'schedule': schedule, 'chunk': chunk_size}])
                     pred_speedup = float(model.predict(user_df)[0])
-                    best_config = get_ai_recommendation(model, input_N)
+                    best_config = get_ai_recommendation(model, input_N).iloc[0]
                 
                 st.session_state['last_run'] = {
                     'N': input_N, 'threads': threads, 'schedule': schedule, 'chunk': chunk_size,
                     't_seq': t_seq, 't_par': t_par, 'pi_seq': pi_seq, 'pi_par': pi_par,
-                    'speedup': speedup, 'efficiency': efficiency,
+                    'pi_error': pi_error, 'speedup': speedup, 'efficiency': efficiency,
                     'pred_speedup': pred_speedup, 'best_config': best_config
                 }
 
@@ -146,15 +178,14 @@ with tab1:
         col_left, col_right = st.columns(2)
         
         with col_left:
-            st.subheader("Numerical Calculation Verification")
-            st.write(f"**Target Workload (N)**: `{run['N']:,}` steps")
+            st.subheader("Numerical Verification")
+            st.write(f"**Workload (N)**: `{run['N']:,}` steps")
             st.write(f"**Sequential Calculated $\\pi$**: `{run['pi_seq']:.15f}`")
             st.write(f"**Parallel Calculated $\\pi$**: `{run['pi_par']:.15f}`")
-            exact_pi = 3.141592653589793
-            st.write(f"**Absolute Error vs Exact $\\pi$**: `{abs(run['pi_par'] - exact_pi):.15e}`")
+            st.write(f"**Floating-Point Error**: `{run['pi_error']:.15e}`")
 
         with col_right:
-            st.subheader("AI Performance Model Prediction")
+            st.subheader("AI Performance Prediction")
             if run['pred_speedup'] is not None:
                 st.write(f"**AI Predicted Speedup**: `{run['pred_speedup']:.2f}x`")
                 st.write(f"**Measured Actual Speedup**: `{run['speedup']:.2f}x`")
@@ -164,19 +195,30 @@ with tab1:
             
             if run['best_config'] is not None:
                 b = run['best_config']
-                st.success(f"**AI Recommended Optimal Setting for N = {run['N']:,}**:\n"
+                st.success(f"**Recommended Configuration for N = {run['N']:,}**:\n"
                            f"- Threads: **{int(b['threads'])}**\n"
                            f"- Schedule: **{b['schedule'].upper()}**\n"
                            f"- Chunk Size: **{int(b['chunk'])}**\n"
-                           f"- Max Predicted Speedup: **{b['predicted_speedup']:.2f}x**")
+                           f"- Highest Predicted Speedup: **{b['predicted_speedup']:.2f}x**")
 
+    # System Info
+    st.markdown("---")
+    col_hw1, col_hw2, col_hw3, col_hw4 = st.columns(4)
+    col_hw1.caption(f"**CPU Cores**: {os.cpu_count()} Logical")
+    col_hw2.caption(f"**Supported Threads**: 1, 2, 4, 8")
+    col_hw3.caption(f"**Python**: {sys.version.split()[0]}")
+    col_hw4.caption(f"**OS**: {platform.system()} ({platform.machine()})")
+    st.markdown('<div class="hw-note">⚠️ Note: Performance measurements are hardware-dependent for the current host machine.</div>', unsafe_allow_html=True)
+
+# ------------------------------------------------------------------
+# TAB 2: SCHEDULE COMPARISON
+# ------------------------------------------------------------------
 with tab2:
-    st.subheader(f"⚡ Live Comparison of All OpenMP Scheduling Algorithms (N = {input_N:,}, {threads} Threads)")
-    st.write("Executes **Static**, **Dynamic**, and **Guided** OpenMP schedules across chunk sizes (100, 1000, 10000) live and ranks them by execution time.")
+    st.subheader(f"⚡ Live Comparison of All OpenMP Scheduling Strategies (N = {input_N:,}, {threads} Threads)")
     
     if st.button("Run All Scheduling Algorithms Now", type="primary"):
-        with st.spinner("Executing sequential baseline and 9 parallel schedule/chunk combinations..."):
-            t_seq, _ = run_c_binary([seq_bin, str(input_N)])
+        with st.spinner("Executing sequential baseline and 9 parallel configurations..."):
+            t_seq, _ = measure_median_time([seq_bin, str(input_N)])
             
             sched_list = ["static", "dynamic", "guided"]
             chunk_list = [100, 1000, 10000]
@@ -184,21 +226,17 @@ with tab2:
             records = []
             for s in sched_list:
                 for c in chunk_list:
-                    t_min = 1e9
-                    for _ in range(2):
-                        t_p, _ = run_c_binary([par_bin, str(input_N), str(threads), s, str(c)])
-                        if t_p and t_p < t_min:
-                            t_min = t_p
-                    
-                    sp = t_seq / t_min
-                    eff = (sp / threads) * 100.0
-                    records.append({
-                        'Schedule': s.upper(),
-                        'Chunk Size': c,
-                        'Execution Time (s)': round(t_min, 6),
-                        'Speedup': round(sp, 2),
-                        'Efficiency (%)': round(eff, 1)
-                    })
+                    t_med, _ = measure_median_time([par_bin, str(input_N), str(threads), s, str(c)])
+                    if t_med:
+                        sp = t_seq / t_med
+                        eff = (sp / threads) * 100.0
+                        records.append({
+                            'Schedule': s.upper(),
+                            'Chunk Size': c,
+                            'Execution Time (s)': round(t_med, 6),
+                            'Speedup': round(sp, 2),
+                            'Efficiency (%)': round(eff, 1)
+                        })
             
             res_df = pd.DataFrame(records).sort_values(by='Execution Time (s)').reset_index(drop=True)
             st.session_state['sched_comp'] = {
@@ -219,17 +257,17 @@ with tab2:
         col_w1, col_w2 = st.columns(2)
         with col_w1:
             st.success(f"""
-            ### 🏆 WINNER: **{best['Schedule']}** (Chunk: {best['Chunk Size']})
-            - **Execution Time**: `{best['Execution Time (s)']} seconds`
-            - **Speedup**: **`{best['Speedup']}x` faster** than sequential (`{t_seq:.6f} s`)
-            - **Parallel Efficiency**: **`{best['Efficiency (%)']}%`**
+            ### 🏆 BEST SCHEDULE: **{best['Schedule']}** (Chunk: {best['Chunk Size']})
+            - **Time**: `{best['Execution Time (s)']} s`
+            - **Speedup**: **`{best['Speedup']}x`** vs sequential baseline
+            - **Efficiency**: **`{best['Efficiency (%)']}%`**
             """)
         with col_w2:
             st.error(f"""
-            ### ⚠️ SLOWEST: **{worst['Schedule']}** (Chunk: {worst['Chunk Size']})
-            - **Execution Time**: `{worst['Execution Time (s)']} seconds` (**`{worst['Execution Time (s)'] / best['Execution Time (s)']:.2f}x` slower**)
+            ### ⚠️ SLOWEST SCHEDULE: **{worst['Schedule']}** (Chunk: {worst['Chunk Size']})
+            - **Time**: `{worst['Execution Time (s)']} s` (**`{worst['Execution Time (s)'] / best['Execution Time (s)']:.2f}x` slower**)
             - **Speedup**: `{worst['Speedup']}x`
-            - **Parallel Efficiency**: `{worst['Efficiency (%)']}%`
+            - **Efficiency**: `{worst['Efficiency (%)']}%`
             """)
 
         st.subheader("Ranked Performance Summary Table")
@@ -238,21 +276,9 @@ with tab2:
         st.subheader("Execution Time Comparison Chart (Lower is Better)")
         st.bar_chart(data=df_comp, x="Schedule", y="Execution Time (s)", color="Chunk Size", use_container_width=True)
 
-        with st.expander("📖 Why is one schedule better than the others?"):
-            st.markdown("""
-            ### 1. GUIDED Schedule (Best for dynamic/large workloads)
-            - **Mechanism**: Starts with large chunk sizes and exponentially shrinks them down to `chunk_size` near loop completion.
-            - **Why it wins**: Minimizes task-queue locking overhead at the start while providing dynamic load balancing near the end.
-
-            ### 2. STATIC Schedule (Best for uniform workloads)
-            - **Mechanism**: Divides iterations into equal blocks at start time with zero runtime queue overhead.
-            - **Why it performs well**: Since each iteration of midpoint integration takes identical CPU cycles, static scheduling has zero lock contention.
-
-            ### 3. DYNAMIC Schedule (Worst when chunk size is small)
-            - **Mechanism**: Chunks are placed in a shared queue. Threads grab chunks dynamically as they finish.
-            - **Why small chunks fail**: With `chunk=100` and $N=100\text{M}$, there are $1,000,000$ queue lock requests. Mutex synchronization overhead completely destroys parallel speedup!
-            """)
-
+# ------------------------------------------------------------------
+# TAB 3: EMPIRICAL DATASET
+# ------------------------------------------------------------------
 with tab3:
     st.subheader("Empirical Benchmark Dataset (data/performance.csv)")
     csv_path = os.path.join("data", "performance.csv")
@@ -263,6 +289,9 @@ with tab3:
     else:
         st.info("No benchmark dataset found. Run `make run-benchmark` to generate empirical data.")
 
+# ------------------------------------------------------------------
+# TAB 4: PERFORMANCE GRAPHS
+# ------------------------------------------------------------------
 with tab4:
     st.subheader("Performance Analysis Plots")
     res_dir = "results"

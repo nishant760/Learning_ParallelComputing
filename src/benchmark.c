@@ -2,9 +2,16 @@
  * benchmark.c
  * ------------------------------------------------------------------
  * Project: AI-Assisted Parallel Numerical Computation & Scheduling
- * Description: Automated benchmark suite that runs sequential and parallel
- *              Pi computations across multiple workloads, thread counts,
- *              schedules, and chunk sizes. Outputs empirical metrics into data/performance.csv.
+ * Description: Automated benchmark suite that runs true sequential and
+ *              OpenMP parallel Pi computations across multiple workloads,
+ *              thread counts, schedules, and chunk sizes.
+ *
+ * Methodology (Phases 1-3):
+ *   - Performs 1 warm-up run + 5 measured runs per configuration.
+ *   - Computes median, mean, standard deviation, and min execution times.
+ *   - Uses MEDIAN execution time as primary metric for Speedup & Efficiency.
+ *   - Compares true sequential execution against OpenMP parallel execution.
+ *   - Exports dataset into data/performance.csv.
  * ------------------------------------------------------------------
  */
 
@@ -14,9 +21,12 @@
 #include <math.h>
 #include <omp.h>
 
+#define WARMUP_RUNS 1
+#define MEASURED_RUNS 5
+
 volatile double g_dummy_sink = 0.0;
 
-// Measure sequential execution time for a given N
+// Measure single-threaded sequential execution time for a given N (conceptual T1 baseline)
 __attribute__((noinline))
 double run_sequential(long long N, double *out_pi) {
     double step = 1.0 / (double)N;
@@ -34,11 +44,11 @@ double run_sequential(long long N, double *out_pi) {
     double end_time = omp_get_wtime();
     
     *out_pi = step * sum;
-    g_dummy_sink = *out_pi; // Ensure result cannot be eliminated by GCC
+    g_dummy_sink = *out_pi; // Prevent dead-code elimination by compiler
     return end_time - start_time;
 }
 
-// Measure parallel execution time for a given configuration
+// Measure multi-threaded OpenMP parallel execution time for a given configuration
 __attribute__((noinline))
 double run_parallel(long long N, int num_threads, const char *sched_type, int chunk_size, double *out_pi) {
     omp_set_num_threads(num_threads);
@@ -73,6 +83,100 @@ double run_parallel(long long N, int num_threads, const char *sched_type, int ch
     return end_time - start_time;
 }
 
+int compare_doubles(const void *a, const void *b) {
+    double da = *(const double *)a;
+    double db = *(const double *)b;
+    return (da > db) - (da < db);
+}
+
+typedef struct {
+    double median;
+    double mean;
+    double stddev;
+    double min;
+    double pi;
+} RunStats;
+
+RunStats measure_sequential_stats(long long N) {
+    double dummy_pi = 0.0;
+
+    // 1. Warm-up run
+    for (int w = 0; w < WARMUP_RUNS; w++) {
+        run_sequential(N, &dummy_pi);
+    }
+
+    // 2. Measured runs
+    double times[MEASURED_RUNS];
+    double pi_vals[MEASURED_RUNS];
+    double sum_t = 0.0;
+
+    for (int r = 0; r < MEASURED_RUNS; r++) {
+        times[r] = run_sequential(N, &pi_vals[r]);
+        sum_t += times[r];
+    }
+
+    double mean_t = sum_t / (double)MEASURED_RUNS;
+
+    double var_t = 0.0;
+    for (int r = 0; r < MEASURED_RUNS; r++) {
+        double diff = times[r] - mean_t;
+        var_t += diff * diff;
+    }
+    double stddev_t = sqrt(var_t / (double)MEASURED_RUNS);
+
+    double sorted_times[MEASURED_RUNS];
+    memcpy(sorted_times, times, sizeof(times));
+    qsort(sorted_times, MEASURED_RUNS, sizeof(double), compare_doubles);
+
+    RunStats stats;
+    stats.median = sorted_times[MEASURED_RUNS / 2];
+    stats.min = sorted_times[0];
+    stats.mean = mean_t;
+    stats.stddev = stddev_t;
+    stats.pi = pi_vals[0];
+    return stats;
+}
+
+RunStats measure_parallel_stats(long long N, int threads, const char *sched, int chunk) {
+    double dummy_pi = 0.0;
+
+    // 1. Warm-up run
+    for (int w = 0; w < WARMUP_RUNS; w++) {
+        run_parallel(N, threads, sched, chunk, &dummy_pi);
+    }
+
+    // 2. Measured runs
+    double times[MEASURED_RUNS];
+    double pi_vals[MEASURED_RUNS];
+    double sum_t = 0.0;
+
+    for (int r = 0; r < MEASURED_RUNS; r++) {
+        times[r] = run_parallel(N, threads, sched, chunk, &pi_vals[r]);
+        sum_t += times[r];
+    }
+
+    double mean_t = sum_t / (double)MEASURED_RUNS;
+
+    double var_t = 0.0;
+    for (int r = 0; r < MEASURED_RUNS; r++) {
+        double diff = times[r] - mean_t;
+        var_t += diff * diff;
+    }
+    double stddev_t = sqrt(var_t / (double)MEASURED_RUNS);
+
+    double sorted_times[MEASURED_RUNS];
+    memcpy(sorted_times, times, sizeof(times));
+    qsort(sorted_times, MEASURED_RUNS, sizeof(double), compare_doubles);
+
+    RunStats stats;
+    stats.median = sorted_times[MEASURED_RUNS / 2];
+    stats.min = sorted_times[0];
+    stats.mean = mean_t;
+    stats.stddev = stddev_t;
+    stats.pi = pi_vals[0];
+    return stats;
+}
+
 int main(void) {
     long long input_sizes[] = {1000000LL, 10000000LL, 20000000LL, 50000000LL, 75000000LL, 100000000LL};
     int num_sizes = sizeof(input_sizes) / sizeof(input_sizes[0]);
@@ -93,30 +197,25 @@ int main(void) {
         return 1;
     }
 
-    fprintf(fp, "N,threads,schedule,chunk,execution_time,speedup,efficiency\n");
+    // New revised dataset header (Phase 2)
+    fprintf(fp, "N,threads,schedule,chunk,median_time,mean_time,stddev_time,min_time,speedup,efficiency,pi_error\n");
     printf("=================================================================================\n");
-    printf(" Starting OpenMP Parallel Pi Computation Benchmark Suite\n");
+    printf(" Starting OpenMP Empirical Benchmark Suite (Warmup: %d, Measured Runs: %d)\n", WARMUP_RUNS, MEASURED_RUNS);
     printf("=================================================================================\n");
 
-    int total_runs = num_sizes * num_threads_arr * num_schedules * num_chunks;
+    int total_configs = num_sizes * num_threads_arr * num_schedules * num_chunks;
     int current_run = 0;
+    const double exact_pi = 3.14159265358979323846;
 
     for (int s = 0; s < num_sizes; s++) {
         long long N = input_sizes[s];
 
-        // Baseline sequential execution time (min of 3 runs)
-        double seq_time = 1e9;
-        double pi_val = 0.0;
-        for (int r = 0; r < 3; r++) {
-            double dummy_pi = 0.0;
-            double t = run_sequential(N, &dummy_pi);
-            if (t < seq_time) {
-                seq_time = t;
-                pi_val = dummy_pi;
-            }
-        }
-        g_dummy_sink += pi_val;
-        printf("\n>>> Workload N = %lld | Baseline Sequential Time: %.6f s | Pi: %.10f <<<\n", N, seq_time, pi_val);
+        // Measure true sequential baseline stats (1 warm-up + 5 measured runs)
+        RunStats seq_stats = measure_sequential_stats(N);
+        g_dummy_sink += seq_stats.pi;
+
+        printf("\n>>> Workload N = %10lld | Sequential Median Time: %.6f s (StdDev: %.6f) | Pi: %.10f <<<\n",
+               N, seq_stats.median, seq_stats.stddev, seq_stats.pi);
 
         for (int t_idx = 0; t_idx < num_threads_arr; t_idx++) {
             int threads = thread_counts[t_idx];
@@ -128,22 +227,22 @@ int main(void) {
                     int chunk = chunk_sizes[c_idx];
                     current_run++;
 
-                    double par_time = 1e9;
-                    for (int r = 0; r < 3; r++) {
-                        double dummy_pi = 0.0;
-                        double t = run_parallel(N, threads, sched, chunk, &dummy_pi);
-                        if (t < par_time) par_time = t;
-                    }
+                    RunStats par_stats = measure_parallel_stats(N, threads, sched, chunk);
+                    g_dummy_sink += par_stats.pi;
 
-                    double speedup = seq_time / par_time;
+                    // Speedup & Efficiency calculated using MEDIAN time
+                    double speedup = seq_stats.median / par_stats.median;
                     double efficiency = (speedup / (double)threads) * 100.0;
+                    double pi_error = fabs(par_stats.pi - exact_pi);
 
-                    fprintf(fp, "%lld,%d,%s,%d,%.8f,%.4f,%.2f\n",
-                            N, threads, sched, chunk, par_time, speedup, efficiency);
+                    fprintf(fp, "%lld,%d,%s,%d,%.8f,%.8f,%.8f,%.8f,%.4f,%.2f,%.15e\n",
+                            N, threads, sched, chunk,
+                            par_stats.median, par_stats.mean, par_stats.stddev, par_stats.min,
+                            speedup, efficiency, pi_error);
                     fflush(fp);
 
-                    printf("[%3d/%3d] N=%10lld | T=%d | Sched=%-7s | Chunk=%-5d -> Time: %8.6fs | Speedup: %5.2fx | Eff: %6.2f%%\n",
-                           current_run, total_runs, N, threads, sched, chunk, par_time, speedup, efficiency);
+                    printf("[%3d/%3d] N=%10lld | T=%d | Sched=%-7s | Chunk=%-5d -> Median: %8.6fs | Speedup: %5.2fx | Eff: %6.2f%%\n",
+                           current_run, total_configs, N, threads, sched, chunk, par_stats.median, speedup, efficiency);
                 }
             }
         }

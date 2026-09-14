@@ -1,4 +1,4 @@
-# Makefile for AI-Assisted Parallel Numerical Computation & Scheduling Using C/OpenMP
+# Makefile for AI-Assisted OpenMP Scheduling for Parallel Numerical Computation
 
 # Auto-detect OpenMP C compiler
 GCC_16 := $(shell which /opt/homebrew/bin/gcc-16 2>/dev/null)
@@ -21,7 +21,7 @@ endif
 
 PYTHON = ./venv/bin/python
 
-.PHONY: all sequential parallel benchmark run-benchmark train visualize app clean help
+.PHONY: all sequential parallel benchmark run-benchmark train visualize app demo clean help
 
 all: sequential parallel benchmark
 
@@ -51,17 +51,24 @@ visualize: data/performance.csv
 	$(PYTHON) ai/visualize.py
 
 app:
-	./venv/bin/streamlit run app.py
+	$(PYTHON) -m streamlit run app.py --server.headless true
+
+demo: all
+	@echo "========================================================================="
+	@echo " Running Quick AI Scheduler Demonstration (N = 50,000,000 steps)..."
+	@echo "========================================================================="
+	$(PYTHON) ai/ai_scheduler.py 50000000
 
 clean:
 	rm -rf bin data/performance.csv model/speedup_model.pkl results/*.png
 	@echo "[CLEAN COMPLETE]"
 
 help:
-	@echo "Available targets:"
-	@echo "  make all          - Compile all C programs (sequential_pi, parallel_pi, benchmark)"
-	@echo "  make run-benchmark- Run full empirical OpenMP benchmark suite"
-	@echo "  make train        - Train AI Random Forest speedup prediction model"
+	@echo "Available Makefile Targets:"
+	@echo "  make all          - Compile C programs (sequential_pi, parallel_pi, benchmark)"
+	@echo "  make run-benchmark- Run empirical OpenMP benchmark suite (1 warmup + 5 measured runs)"
+	@echo "  make train        - Train Random Forest speedup model (GroupKFold + 75M holdout)"
 	@echo "  make visualize    - Generate performance graphs"
-	@echo "  make app          - Launch Streamlit academic UI"
+	@echo "  make demo         - Run quick AI scheduler demonstration on N = 50M"
+	@echo "  make app          - Launch Streamlit academic web interface"
 	@echo "  make clean        - Remove compiled binaries and generated data"
