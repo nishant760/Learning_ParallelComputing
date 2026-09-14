@@ -1,131 +1,192 @@
 # Academic Project Report
-## AI-Assisted OpenMP Scheduling for Parallel Numerical Computation
+## AI-Assisted Parallel Numerical Computation and Scheduling
 
 ---
 
-### 1. Problem Statement & Motivation
+### 1. Introduction
 
-Selecting optimal parallel execution parameters—such as thread count, scheduling policy (`static`, `dynamic`, `guided`), and chunk size—for multi-threaded computations is difficult. Suboptimal parameters introduce runtime scheduling overhead, queue synchronization delays, or load imbalance, degrading parallel speedup. While single-threaded sequential execution on multi-core processors is bottlenecked by single-core frequency limits, manual trial-and-error configuration of OpenMP parameters for every new workload size is inefficient. An automated, machine-learning-assisted scheduling framework is required to predict speedups and recommend optimal execution settings.
+Large-scale numerical computations require millions to billions of iterations and can become computationally bottlenecked on a single processor core. Parallel computing divides a computational workload among multiple physical processing units so independent operations execute simultaneously. Numerical integration using the midpoint rule is selected as the computational workload because its iterations are embarrassingly parallel (zero loop-carried data dependencies) and highly suitable for data parallelism.
 
-> **Core Note**: $\pi$ calculation via midpoint numerical integration serves as the embarrassingly parallel benchmark workload used to study OpenMP performance tuning.
-
----
-
-### 2. Project Objectives
-
-1. **Sequential Baseline Implementation**: Develop a single-threaded C baseline program (`src/sequential_pi.c`) computing $\pi$ via midpoint integration to measure reference baseline time ($T_1$).
-2. **OpenMP Parallel Engine**: Implement a multi-threaded C program (`src/parallel_pi.c`) employing `#pragma omp parallel for reduction(+:sum)` with configurable threads (1, 2, 4, 8), OpenMP schedules, and chunk sizes.
-3. **Robust Empirical Benchmarking**: Systematically benchmark 216 configurations across workload sizes ($N = 1\text{M}$ to $100\text{M}$). Employ a robust methodology of **1 warm-up run + 5 measured runs per configuration**, utilizing the **median execution time** as the primary timing metric to eliminate measurement noise.
-4. **Performance Evaluation**: Compute Speedup ($S = T_{1,\text{median}} / T_{p,\text{median}}$), Parallel Efficiency ($E = S / P \times 100\%$), standard deviation, floating-point error, and theoretical bounds via Amdahl's Law.
-5. **Machine Learning Performance Modeling**: Train a Random Forest Regressor on empirical benchmark data to predict speedup from parameters $(N, \text{threads}, \text{schedule}, \text{chunk})$. Evaluate generalization using **GroupKFold cross-validation** (grouped by workload size $N$) and an unseen holdout test ($N = 75\text{M}$).
-6. **AI-Assisted Scheduler**: Develop a Python scheduler (`ai/ai_scheduler.py`) that evaluates 27 candidate configurations for a target workload $N$, selects the highest predicted configuration, executes live C binaries, and compares **Predicted Performance** vs. **Measured Performance**.
-7. **Academic Streamlit Interface**: Build a professional 4-section Streamlit application (`app.py`) providing project overview, live experimentation, schedule comparison, AI recommendations, and system hardware specifications.
+This project implements a single-threaded C sequential baseline and parallel multi-threaded C programs using OpenMP. Static, dynamic, and guided scheduling strategies are evaluated across different workloads and numbers of worker threads. Machine learning (Random Forest Regression) is incorporated to predict task execution/burst time and expected speedup for unseen workloads, supporting an AI-assisted scheduling decision.
 
 ---
 
-### 3. Core Concepts & Theoretical Background
+### 2. Objectives
 
-#### 1. Parallel Computing & Shared-Memory Parallelism
-Parallel computing executes multiple calculations simultaneously across multiple physical processor cores. In shared-memory systems, all threads access a unified global memory address space.
-
-#### 2. OpenMP & Fork-Join Model
-OpenMP (Open Multi-Processing) is an API for shared-memory multi-processing in C/C++. It follows the **fork-join model**: execution starts on a master thread; when encountering `#pragma omp parallel`, the master thread forks worker threads to execute parallel loop iterations, joining them upon completion.
-
-#### 3. Numerical Integration & Embarrassingly Parallel Workloads
-We evaluate the definite integral:
-$$\pi = \int_0^1 \frac{4}{1+x^2} \, dx \approx h \sum_{i=0}^{N-1} \frac{4}{1 + x_i^2}, \quad h = \frac{1}{N}, \ x_i = (i + 0.5)h$$
-Because each sub-interval evaluation $f(x_i)$ is completely independent of other iterations, the workload is **embarrassingly parallel** (zero loop-carried data dependencies).
-
-#### 4. Race Conditions & OpenMP Reduction
-Accumulating $f(x_i)$ into a shared `sum` variable creates a **race condition** if multiple threads write simultaneously. The `#pragma omp reduction(+:sum)` clause instructs OpenMP to create thread-private copies of `sum` initialized to 0. At loop completion, OpenMP combines these private partial results into the global master variable using tree-based reduction, avoiding a race condition.
-
-#### 5. OpenMP Scheduling Strategies & Chunk Size
-- **Static (`schedule(static, chunk)`)**: Divides iterations into fixed blocks of size `chunk` assigned to threads round-robin at loop start. Incurs zero queue lock overhead.
-- **Dynamic (`schedule(dynamic, chunk)`)**: Iterations are divided into chunks placed in a runtime queue. As threads finish work, they dynamically request additional chunks. Small chunk sizes (e.g. 100) introduce significant runtime scheduling overhead as threads request additional chunks from the shared queue.
-- **Guided (`schedule(guided, chunk)`)**: Chunks start large and exponentially shrink to `chunk` as loop completion approaches. Combines minimal initial queue locking with dynamic load balancing. Guided scheduling performed best for the tested workload/configuration on the benchmark system.
-
-#### 6. Speedup, Parallel Efficiency & Amdahl's Law
-- **Speedup ($S$)**: $S = \frac{T_{1,\text{median}}}{T_{p,\text{median}}}$
-- **Parallel Efficiency ($E$)**: $E = \frac{S}{P} \times 100\%$
-- **Amdahl's Law**: $S_{\text{max}}(P) = \frac{1}{f + \frac{1 - f}{P}}$, where $f$ is the sequential fraction of code. On 8 physical cores, memory bandwidth constraints and thread management overhead bound peak empirical speedup.
-
-#### 7. Empirical Benchmarking Methodology
-To prevent measurement anomalies (such as OS context-switch spikes or cold-cache timing artifacts), each benchmark configuration runs 1 warm-up iteration followed by 5 measured runs. The **median execution time** is used for all speedup and efficiency calculations.
-
-#### 8. Random Forest Regression & Feature Engineering
-A Random Forest Regressor (100 decision trees) maps input features $(N, \text{threads}, \text{schedule}, \text{chunk}) \to \text{speedup}$. Categorical schedule strategies (`static`, `dynamic`, `guided`) are one-hot encoded.
-
-#### 9. Unseen Workload Validation & GroupKFold
-To test generalization without data leakage, we perform **GroupKFold cross-validation** grouped by workload size $N$, ensuring rows from the same $N$ never appear in both training and validation folds simultaneously. We also evaluate zero-shot prediction on a holdout workload $N = 75\text{M}$.
+- Develop a sequential C implementation for a computationally intensive numerical integration problem ($\pi$ calculation via midpoint rule).
+- Develop a parallel implementation using OpenMP and divide the workload among multiple threads using `#pragma omp parallel for reduction(+:sum)`.
+- Compare static, dynamic, and guided scheduling strategies across different chunk sizes.
+- Test different input sizes ($N$) and numbers of worker threads (1, 2, 4, 8).
+- Measure execution/burst time, speedup, parallel efficiency, and CPU utilization.
+- Generate empirical benchmark data (1 warm-up + 5 measured runs using median execution time) and train a Random Forest regression model for performance and burst-time prediction.
+- Predict expected speedup for an unseen input size and compare it with actual live execution results.
+- Use predictions to support AI-assisted scheduling decisions and optimize parallel execution.
 
 ---
 
-### 4. System Architecture & Workflow
+### 3. Existing System & Drawbacks
+
+#### Existing System
+- Numerical computation is commonly executed sequentially using a single CPU thread.
+- A fixed parallel configuration may be selected without considering workload characteristics.
+- Basic parallel programs may use only one static scheduling policy.
+- Performance is often evaluated using execution time alone.
+- Conventional schedulers do not use historical performance data to predict workload cost.
+
+#### Drawbacks
+- Sequential execution becomes slow for very large input sizes ($N \ge 100,000,000$).
+- Equal work distribution may not always provide good load balance across dynamic environments.
+- Scheduling overhead (e.g. dynamic queue locking with small chunk sizes) can severely reduce parallel performance.
+- Increasing the number of threads does not guarantee proportional speedup due to Amdahl's Law and synchronization bottlenecks.
+- Without prediction, the scheduler may select a suboptimal thread count or scheduling strategy.
+
+---
+
+### 4. Proposed System & Advantages
+
+#### Proposed System
+- Accept a large numerical workload ($N$) and configure OpenMP worker threads.
+- Execute a sequential C baseline and measure reference execution time ($T_1$).
+- Execute parallel C/OpenMP versions using static, dynamic, and guided scheduling policies.
+- Record median execution time, speedup, parallel efficiency, and CPU utilization for different workloads and thread counts.
+- Train a Random Forest regression model using empirical benchmark data to predict task burst time and expected speedup.
+- For an unseen workload, use model predictions to recommend an effective parallel scheduling configuration.
+
+#### Key Advantages
+- **Reduced Execution Time**: Accelerates large numerical integration computations using multi-core parallelism.
+- **Better Load Balancing**: Dynamically evaluates static, dynamic, and guided schedules to prevent core idling.
+- **Quantitative Speedup Analysis**: Evaluates speedup ($S = T_1 / T_p$) and efficiency ($E = S / P \times 100\%$) based on median execution timing.
+- **Comparison of Scheduling Policies**: Demonstrates queue locking overhead and load balancing trade-offs across chunk sizes.
+- **AI-Assisted Performance Prediction**: Uses machine learning regression to model non-linear CPU performance trends.
+- **Adaptive Scheduling Decision**: Recommends optimal thread count, schedule strategy, and chunk size before execution.
+
+---
+
+### 5. Literature Survey
+
+1. **Chandra et al. (2001) — *Parallel Programming in OpenMP***:
+   Demonstrated shared-memory multi-threading techniques using OpenMP pragma directives. Established foundational principles for loop iteration splitting, reductions, and static vs dynamic scheduling overheads.
+2. **Dagum & Menon (1998) — *OpenMP: An Industry Standard API for Shared-Memory Programming***:
+   Explored thread synchronization costs, work-sharing constructs, and cache coherence behavior in multi-core architectures.
+3. **Amdahl (1967) — *Validity of the Single Processor Approach to Achieving Large Scale Computing Capabilities***:
+   Formulated Amdahl's Law, defining theoretical speedup bounds based on sequential program fractions.
+4. **Machine Learning for Auto-Tuning (Modern Approaches)**:
+   Recent research highlights using decision trees and Random Forest regressors to predict execution time and optimal parameters for high-performance computing (HPC) loops without exhaustive runtime searching.
+
+---
+
+### 6. System Requirements Specification (SRS)
+
+#### Software Requirements
+- **Programming Language**: C
+- **Parallel Framework**: OpenMP
+- **Compiler**: GCC / MinGW with OpenMP support (`-O3 -fopenmp`)
+- **Operating System**: macOS, Linux, or Windows
+- **Development Tools**: VS Code / Terminal / Makefile
+- **Benchmark Data Format**: CSV (`data/performance.csv`)
+- **AI & ML Libraries**: Python 3.10+, Pandas, NumPy, Scikit-learn, Joblib
+- **Visualization & UI**: Matplotlib, Streamlit
+- **Version Control**: Git & GitHub
+
+#### Functional Requirements
+- Accept input size $N$ and number of worker threads (1, 2, 4, 8).
+- Execute sequential C baseline and OpenMP parallel computations.
+- Support static, dynamic, and guided scheduling policies.
+- Record median execution time across 5 measured runs (after 1 warm-up run).
+- Calculate speedup, parallel efficiency, CPU utilization, and floating-point error.
+- Generate empirical benchmark dataset (`data/performance.csv`).
+- Train a Random Forest ML regression model.
+- Predict task burst-time and speedup for unseen workloads ($N = 75\text{M}$).
+- Recommend an effective scheduling configuration and validate against live C execution.
+
+#### Non-Functional Requirements
+- **Performance**: Reduce execution time for large workload computations.
+- **Scalability**: Support scaling input sizes ($N = 1\text{M}$ to $100\text{M}$) and thread counts (1 to 8).
+- **Reliability**: Produce consistent numerical results ($\pi \approx 3.141592653589793$).
+- **Accuracy**: Maintain negligible floating-point error ($< 10^{-13}$).
+- **Usability**: Simple command-line interface and interactive Streamlit web dashboard.
+- **Maintainability**: Modular separation of C computation, benchmarking, ML model, and UI layers.
+- **Reproducibility**: Store experimental results in CSV format for verifiable comparison.
+
+---
+
+### 7. High-Level System Design
 
 ```text
-+--------------------------+
-| User Workload Input N    |
-+------------+-------------+
-             |
-             v
-+------------+-------------+
-| Candidate Configurations |  (threads: 2, 4, 8 | schedule: static, dynamic, guided | chunk: 100, 1000, 10000)
-+------------+-------------+
-             |
-             v
-+------------+-------------+
-| Random Forest Regressor  |  (Queries model/speedup_model.pkl)
-+------------+-------------+
-             |
-             v
-+------------+-------------+
-| Candidate Speedup Rank   |  (Sorts candidates by predicted speedup)
-+------------+-------------+
-             |
-             v
-+------------+-------------+
-| Recommended Config       |  (Rank 1 candidate selected for execution)
-+------------+-------------+
-             |
-             v
-+------------+-------------+
-| Live C/OpenMP Execution  |  (Runs bin/sequential_pi & bin/parallel_pi: 1 warmup + 5 measured)
-+------------+-------------+
-             |
-             v
-+------------+-------------+
-| Validation Output        |  (Compares Predicted Performance vs Measured Performance)
-+--------------------------+
++-----------------------+     +-----------------------+     +-----------------------+
+|  User / Researcher    | --> |  C/OpenMP Parallel    | --> |     Scheduler /       |
+|                       |     |       Engine          |     |      Benchmark        |
++-----------------------+     +-----------------------+     +-----------+-----------+
+                                                                        |
+                                                                        v
++-----------------------+     +-----------------------+     +-----------+-----------+
+| CSV Benchmark Data    | <-- |    AI Model           | <-- | Performance Metrics   |
+| (data/performance.csv)|     | (Burst-Time/Speedup)  |     | (Time, Speedup, Eff)  |
++-----------------------+     +-----------------------+     +-----------------------+
+
+Data Flow: Input Workload -> C/OpenMP Engine -> Scheduler -> Performance Metrics -> ML Prediction -> AI-Assisted Scheduling
 ```
 
 ---
 
-### 5. Experimental Results & Machine Learning Evaluation
+### 8. Low-Level System Design (12-Step Process)
 
-#### 1. Numerical Precision
-For $N = 100,000,000$ steps, both sequential and parallel executions yield $\pi \approx 3.141592653589793$, producing a **numerically accurate result with negligible floating-point error** ($< 10^{-14}$).
-
-#### 2. Machine Learning Error Metrics
-- **Holdout Evaluation ($N = 75\text{M}$)**:
-  - $R^2$ Determination Score: **0.9992**
-  - Mean Absolute Error (MAE): **0.0275**
-  - Root Mean Squared Error (RMSE): **0.0456**
-  - Mean Absolute Percentage Error (MAPE): **0.82%**
-- **Workload GroupKFold Cross-Validation**:
-  - Mean $R^2$ Score: **0.9845**
-  - Mean Absolute Percentage Error (MAPE): **3.12%**
+```text
+ [1. Read workload size N]
+            │
+            v
+ [2. Initialize numerical integration parameters]
+            │
+            v
+ [3. Execute sequential baseline (T1)]
+            │
+            v
+ [4. Create OpenMP parallel region]
+            │
+            v
+ [5. Select scheduling strategy (Static/Dynamic/Guided)]
+            │
+            v
+ [6. Distribute loop iterations among threads]
+            │
+            v
+ [7. Reduce partial sums (#pragma omp reduction)]
+            │
+            v
+ [8. Record median execution time]
+            │
+            v
+ [9. Calculate speedup and efficiency]
+            │
+            v
+ [10. Generate benchmark dataset (data/performance.csv)]
+            │
+            v
+ [11. Predict burst time / speedup using ML]
+            │
+            v
+ [12. Select recommended configuration & validate]
+```
 
 ---
 
-### 6. Limitations
+### 9. System Workflow & Modules
 
-1. **Hardware Dependence**: Empirical benchmark metrics and speedup values depend strictly on the processor architecture, cache sizes, and memory bandwidth of the host execution system.
-2. **Data Coverage & Scope**: The Random Forest model only predicts within the parameter ranges represented in training data ($N \in [1\text{M}, 100\text{M}]$, Threads $\in [2, 8]$, Chunks $\in [100, 10000]$).
-3. **Environment Variation**: Unseen workload evaluation tests unseen iteration counts ($N$) on the same hardware, not completely unseen CPU core microarchitectures.
-4. **Production Extensibility**: A production-grade enterprise scheduler would require hardware performance counter features (LLC misses, memory bus contention) and continuous online retraining.
+1. **Input Module**: Accepts workload size $N$, thread count (1, 2, 4, 8), and scheduling parameters.
+2. **Benchmark Preparation**: Generates repeated runs (1 warm-up + 5 measured runs) and stores empirical performance data into CSV.
+3. **Parallel Module**: Compiles and executes sequential and OpenMP parallel C binaries using Static, Dynamic, and Guided scheduling.
+4. **Performance Module**: Calculates median execution time, speedup ($S = T_1 / T_p$), parallel efficiency ($E = S / P \times 100\%$), CPU utilization, and floating-point error.
+5. **AI Module**: Trains Random Forest Regression model on benchmark data and predicts burst-time / speedup for unseen workloads ($N = 75\text{M}$).
+6. **Comparison & Visualization**: Generates matplotlib performance charts (time, speedup, efficiency, schedule comparison, predicted vs measured speedup) and renders Streamlit UI dashboard.
 
 ---
 
-### 7. Conclusion
+### 10. Limitations & Conclusion
 
-This project successfully implements a workload-aware OpenMP performance tuning framework. By combining C/OpenMP multi-threaded numerical integration with Random Forest Regression, the system predicts parallel speedups with $< 1\%$ error on unseen workloads and automatically recommends optimal execution settings on the target system.
+#### Limitations
+- **Hardware Dependence**: Empirical benchmark metrics depend strictly on host CPU architecture, physical core counts, and memory bandwidth.
+- **Training Data Scope**: Predictions apply to parameter ranges represented in training data ($N \in [1\text{M}, 100\text{M}]$, Threads $\in [2, 8]$).
+- **Environment Scope**: Tests unseen iteration counts on the current machine architecture. A multi-node cluster scheduler would require hardware counters and continuous online learning.
+
+#### Conclusion
+The proposed system demonstrates large-scale numerical computation using sequential C and parallel C/OpenMP implementations. Static, dynamic, and guided scheduling strategies are evaluated across multiple workloads and thread counts. Execution time, speedup, parallel efficiency, and CPU utilization provide quantitative measures of parallel performance. A Random Forest regression model predicts task burst-time and expected speedup for unseen workloads, enabling an AI-assisted scheduler to recommend suitable parallel configurations and complement traditional performance optimization.
