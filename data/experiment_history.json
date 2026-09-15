@@ -1,0 +1,74 @@
+[
+  {
+    "N": 50000000,
+    "threads": 8,
+    "schedule": "guided",
+    "chunk": 1000,
+    "seq_time": 0.043275,
+    "par_time": 0.007582,
+    "speedup": 5.71,
+    "efficiency": 71.3,
+    "timestamp": "2026-09-15 10:36:59"
+  },
+  {
+    "N": 50000000,
+    "threads": 8,
+    "schedule": "dynamic",
+    "chunk": 1000,
+    "seq_time": 0.043192,
+    "par_time": 0.00792,
+    "speedup": 5.45,
+    "efficiency": 68.2,
+    "timestamp": "2026-09-15 10:36:53"
+  },
+  {
+    "N": 50000000,
+    "threads": 8,
+    "schedule": "static",
+    "chunk": 1000,
+    "seq_time": 0.043347,
+    "par_time": 0.008504,
+    "speedup": 5.1,
+    "efficiency": 63.7,
+    "timestamp": "2026-09-15 10:36:40"
+  },
+  {
+    "N": 80000000,
+    "threads": 8,
+    "schedule": "dynamic",
+    "chunk": 10000,
+    "seq_time": 0.069246,
+    "par_time": 0.01423,
+    "speedup": 4.87,
+    "efficiency": 60.8,
+    "predicted_speedup": 5.72,
+    "error": 0.8518,
+    "timestamp": "2026-09-15 10:29:35"
+  },
+  {
+    "N": 105000000,
+    "threads": 8,
+    "schedule": "dynamic",
+    "chunk": 10000,
+    "seq_time": 0.090739,
+    "par_time": 0.015886,
+    "speedup": 5.71,
+    "efficiency": 71.4,
+    "predicted_speedup": 5.76,
+    "error": 0.045,
+    "timestamp": "2026-09-15 10:06:20"
+  },
+  {
+    "N": 50000000,
+    "threads": 8,
+    "schedule": "dynamic",
+    "chunk": 10000,
+    "seq_time": 0.043473,
+    "par_time": 0.007615,
+    "speedup": 5.71,
+    "efficiency": 71.4,
+    "predicted_speedup": 5.62,
+    "error": 0.0925,
+    "timestamp": "2026-09-15 10:06:07"
+  }
+]
