@@ -5,14 +5,11 @@ def render_sidebar():
     with st.sidebar:
         st.markdown("""
         <div style="padding: 12px 4px 20px 4px; border-bottom: 1px solid #1E293B; margin-bottom: 20px;">
-            <div style="font-size: 19px; font-weight: 800; color: #38BDF8; letter-spacing: 0.5px;">
-                ⚡ PARALLEL
+            <div style="font-size: 17px; font-weight: 800; color: #38BDF8; letter-spacing: 0.5px;">
+                ⚡ PARALLEL LAB
             </div>
-            <div style="font-size: 15px; font-weight: 700; color: #F8FAFC; letter-spacing: -0.3px;">
-                PERFORMANCE LAB
-            </div>
-            <div style="font-size: 11px; color: #64748B; margin-top: 4px; font-weight: 500;">
-                AI-Assisted OpenMP Optimization
+            <div style="font-size: 12px; font-weight: 600; color: #F8FAFC; margin-top: 3px;">
+                AI-Assisted OpenMP Scheduling
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -52,13 +49,6 @@ def render_sidebar():
             set_page("System Information")
             st.rerun()
 
-        st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
-
-        # Quick Demo Button
-        if st.button("🚀  Quick Demo Mode", use_container_width=True):
-            st.session_state["run_demo"] = True
-            st.session_state["selected_page"] = "AI Optimizer"
-            st.rerun()
 
         # Engine Status Box
         st.markdown("""

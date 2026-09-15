@@ -7,6 +7,14 @@ def apply_custom_styles():
         /* Import Clean Inter Font */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+        /* Hide Streamlit Toolbar (Deploy button, hamburger, etc.) */
+        [data-testid="stToolbar"]         { display: none !important; }
+        [data-testid="stDecoration"]      { display: none !important; }
+        [data-testid="stStatusWidget"]    { display: none !important; }
+        #MainMenu                         { visibility: hidden !important; }
+        header[data-testid="stHeader"]    { display: none !important; }
+        footer                            { display: none !important; }
+
         /* Global Page Background & Font */
         .stApp {
             background-color: #090D16;

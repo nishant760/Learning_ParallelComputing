@@ -8,10 +8,6 @@ from ui.utils import (
     load_model,
     get_dataset_kpis,
     get_ai_recommendation,
-    measure_median_time,
-    save_experiment_record,
-    SEQ_BIN,
-    PAR_BIN
 )
 
 def render_dashboard():
@@ -21,7 +17,7 @@ def render_dashboard():
         st.markdown("""
         <div class="page-header">
             <div class="title">⚡ Parallel Performance Lab</div>
-            <div class="subtitle">Measure, analyze and optimize multicore OpenMP workloads using empirical benchmarking and machine learning.</div>
+            <div class="subtitle">AI-Assisted Parallel Numerical Computation and Scheduling</div>
         </div>
         """, unsafe_allow_html=True)
     with col_h2:
@@ -34,6 +30,34 @@ def render_dashboard():
         if st.button("➕ Run Benchmark", use_container_width=True, type="primary"):
             st.session_state["selected_page"] = "Benchmark Lab"
             st.rerun()
+
+    # Problem statement context strip
+    st.markdown("""
+    <div style="background:#131B2E; border:1px solid #1E293B; border-left:4px solid #38BDF8;
+                border-radius:10px; padding:16px 20px; margin-bottom:24px;">
+        <div style="font-size:11px; font-weight:700; color:#38BDF8; letter-spacing:1px;
+                    text-transform:uppercase; margin-bottom:10px;">Problem Statement</div>
+        <div style="font-size:13px; color:#CBD5E1; line-height:1.7;">
+            Large-scale numerical computations (<b>π via midpoint rule integration</b>) become bottlenecked on a single core.
+            This project parallelises the workload using <b>OpenMP</b> and evaluates three loop scheduling strategies —
+            <b style="color:#38BDF8;">Static</b>, <b style="color:#818CF8;">Dynamic</b>, and <b style="color:#10B981;">Guided</b> —
+            across varying thread counts and chunk sizes. A <b>Random Forest regression model</b> is trained on empirical
+            benchmark data to <b>predict execution time and speedup</b> for unseen workloads, enabling AI-assisted
+            scheduling decisions before execution.
+        </div>
+        <div style="display:flex; gap:24px; margin-top:14px; flex-wrap:wrap;">
+            <div style="font-size:12px; color:#64748B;">
+                <span style="color:#10B981; font-weight:700;">S = T₁ / Tₚ</span>&nbsp; Speedup
+            </div>
+            <div style="font-size:12px; color:#64748B;">
+                <span style="color:#38BDF8; font-weight:700;">E = S / P × 100%</span>&nbsp; Efficiency
+            </div>
+            <div style="font-size:12px; color:#64748B;">
+                <span style="color:#818CF8; font-weight:700;">1 warmup + 5 measured runs</span>&nbsp; Median timing
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # 6 KPI Cards Row
     kpis = get_dataset_kpis()
@@ -190,43 +214,19 @@ def render_dashboard():
             <div class="rec-box">
                 <div class="rec-header">OPTIMAL CANDIDATE (N = 80M)</div>
                 <div style="font-size: 20px; font-weight: 800; color: #F8FAFC;">
-                    {int(best_rec['threads'])} Threads • {str(best_rec['schedule']).upper()}
+                    {int(best_rec['threads'])} Threads · {str(best_rec['schedule']).upper()}
                 </div>
                 <div style="font-size: 13px; color: #94A3B8; margin-top: 2px;">
                     Chunk Size: {int(best_rec['chunk'])}
                 </div>
                 <div style="font-size: 15px; color: #10B981; margin-top: 10px; font-weight: 700;">
-                    Predicted Speedup: {best_rec['predicted_speedup']:.2f}x
+                    Predicted Speedup: {best_rec['predicted_speedup']:.2f}×
+                </div>
+                <div style="font-size: 11px; color: #64748B; margin-top: 8px;">
+                    Go to AI Optimizer to predict & validate with your own inputs.
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
-            if st.button("🚀 Run Recommended Config", use_container_width=True, type="primary"):
-                with st.spinner("Executing OpenMP binary for recommendation..."):
-                    t_seq, pi_seq = measure_median_time([SEQ_BIN, "80000000"])
-                    t_par, pi_par = measure_median_time([
-                        PAR_BIN, "80000000", str(int(best_rec['threads'])), str(best_rec['schedule']), str(int(best_rec['chunk']))
-                    ])
-                    if t_seq and t_par:
-                        act_sp = t_seq / t_par
-                        act_eff = (act_sp / int(best_rec['threads'])) * 100.0
-                        err = abs(best_rec['predicted_speedup'] - act_sp)
-                        pct_err = (err / act_sp) * 100.0
-                        
-                        save_experiment_record({
-                            'N': 80000000,
-                            'threads': int(best_rec['threads']),
-                            'schedule': str(best_rec['schedule']),
-                            'chunk': int(best_rec['chunk']),
-                            'seq_time': round(t_seq, 6),
-                            'par_time': round(t_par, 6),
-                            'speedup': round(act_sp, 2),
-                            'efficiency': round(act_eff, 1),
-                            'predicted_speedup': round(best_rec['predicted_speedup'], 2),
-                            'error': round(err, 4)
-                        })
-
-                        st.success(f"Measured Speedup: **`{act_sp:.2f}x`** | Prediction Error: **`{pct_err:.2f}%`**")
         else:
             st.error("Model unavailable. Run 'make train' to train model.")
 

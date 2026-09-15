@@ -1,197 +1,276 @@
 # ui/ai_optimizer.py
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
+import numpy as np
 
 from ui.utils import (
     load_model,
     load_dataset,
-    get_ai_recommendation,
     measure_median_time,
     save_experiment_record,
+    ensure_binaries,
     SEQ_BIN,
-    PAR_BIN
+    PAR_BIN,
 )
+
+# Sequential time empirically scales linearly with N above ~10M iterations.
+# Derived from the benchmark dataset: ~0.878 ns/iteration.
+SEQ_NS_PER_ITER = 0.878e-9   # seconds per iteration
+
+def _estimate_seq_time(N, df):
+    """Estimate sequential execution time for a given N.
+    Uses dataset if N is in it, otherwise linear interpolation/extrapolation."""
+    if df is not None and not df.empty:
+        seq_rows = df[df['threads'] == 1].groupby('N')['median_time'].median()
+        if N in seq_rows.index:
+            return float(seq_rows[N])
+        # linear interpolation/extrapolation using the per-iteration rate from dataset
+        rates = seq_rows / seq_rows.index.astype(float)
+        rate  = float(rates.mean())
+        return N * rate
+    return N * SEQ_NS_PER_ITER
+
 
 def render_ai_optimizer():
     st.markdown("""
     <div class="page-header">
-        <div class="title">🤖 AI Performance Optimizer</div>
-        <div class="subtitle">Use empirical benchmark data & machine learning to recommend optimal OpenMP configurations for new workloads.</div>
+        <div class="title">🤖 AI-Assisted Scheduling</div>
+        <div class="subtitle">
+            Objective: Use the trained <b>Random Forest regression model</b> to predict
+            <b>task burst time</b> and <b>expected speedup</b> for an unseen workload —
+            without running the binary. Then validate by executing the actual C/OpenMP program
+            and compare <b>predicted vs real</b> performance.
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
     model = load_model()
+    df    = load_dataset()
+
     if model is None:
-        st.error("Random Forest Model missing at 'model/speedup_model.pkl'. Run 'make train' to train model.")
+        st.error("Model not found at `model/speedup_model.pkl`. Run `make train` to train it.")
         return
 
-    # Workload Input Panel
-    st.markdown("""<div class="card-box-header">📥 Workload Input</div>""", unsafe_allow_html=True)
+    # ── Inputs ────────────────────────────────────────────────────────────────
+    st.markdown("""<div class="card-box-header">📥 Enter Workload Parameters</div>""", unsafe_allow_html=True)
 
-    col_in1, col_in2 = st.columns([3, 1])
-    with col_in1:
+    col_n, col_t, col_c, col_btn = st.columns([2.2, 1, 1, 1.2])
+
+    with col_n:
         target_N = st.number_input(
-            "Target Workload Size N (Iterations)",
-            min_value=1000000,
-            max_value=500000000,
-            value=80000000 if "run_demo" not in st.session_state else 50000000,
-            step=5000000
-        )
-    with col_in2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        analyze_btn = st.button("⚡ Analyze Workload", use_container_width=True, type="primary")
-
-    # AI Pipeline Flow Visualization
-    st.markdown("""
-    <div class="pipeline-flow">
-        <div class="pipeline-step">
-            <div class="step-num">STEP 1</div>
-            <div class="step-name">Workload N</div>
-        </div>
-        <div class="pipeline-arrow">➔</div>
-        <div class="pipeline-step">
-            <div class="step-num">STEP 2</div>
-            <div class="step-name">Feature Prep</div>
-        </div>
-        <div class="pipeline-arrow">➔</div>
-        <div class="pipeline-step">
-            <div class="step-num">STEP 3</div>
-            <div class="step-name">Random Forest</div>
-        </div>
-        <div class="pipeline-arrow">➔</div>
-        <div class="pipeline-step">
-            <div class="step-num">STEP 4</div>
-            <div class="step-name">27 Candidates</div>
-        </div>
-        <div class="pipeline-arrow">➔</div>
-        <div class="pipeline-step">
-            <div class="step-num">STEP 5</div>
-            <div class="step-name">Best Config</div>
-        </div>
-        <div class="pipeline-arrow">➔</div>
-        <div class="pipeline-step">
-            <div class="step-num">STEP 6</div>
-            <div class="step-name">Live Validation</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Candidate evaluation table & Recommendation
-    cand_df = get_ai_recommendation(model, target_N)
-    top_config = cand_df.iloc[0]
-
-    col_cand, col_rec = st.columns([1.5, 1.0])
-
-    with col_cand:
-        st.markdown("""<div class="card-box-header">📋 Evaluated Candidate Configurations</div>""", unsafe_allow_html=True)
-        st.dataframe(
-            cand_df[['Rank', 'threads', 'schedule', 'chunk', 'predicted_speedup']].style.highlight_max(axis=0, subset=['predicted_speedup'], color='rgba(52, 211, 153, 0.3)'),
-            use_container_width=True,
-            height=320
+            "Workload Size N (iterations)",
+            min_value=1_000_000,
+            max_value=500_000_000,
+            value=50_000_000,
+            step=5_000_000,
+            format="%d",
         )
 
-    with col_rec:
-        st.markdown("""<div class="card-box-header">⭐ AI Recommended Configuration</div>""", unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="rec-box">
-            <div class="rec-header">RECOMMENDED OPTIMAL SETTING</div>
-            <div style="font-size: 22px; font-weight: 800; color: #F8FAFC;">
-                {int(top_config['threads'])} Threads
-            </div>
-            <div style="font-size: 16px; font-weight: 700; color: #38BDF8; margin-top: 4px;">
-                {str(top_config['schedule']).upper()} Scheduling (Chunk: {int(top_config['chunk'])})
-            </div>
-            <div style="font-size: 18px; font-weight: 700; color: #34D399; margin-top: 10px;">
-                Predicted Speedup: {top_config['predicted_speedup']:.2f}x
-            </div>
-            <div style="font-size: 12px; color: #94A3B8; margin-top: 10px; line-height: 1.4;">
-                <b>Why this recommendation?</b><br>
-                Highest predicted speedup among all 27 evaluated candidate configurations based on empirical dataset patterns.
+    with col_t:
+        target_threads = st.selectbox(
+            "Threads",
+            options=[1, 2, 4, 8],
+            index=2,
+        )
+
+    with col_c:
+        target_chunk = st.selectbox(
+            "Chunk Size",
+            options=[100, 1000, 10000],
+            index=1,
+        )
+
+    with col_btn:
+        st.markdown("<div style='height: 26px;'></div>", unsafe_allow_html=True)
+        predict_btn = st.button("🤖 Predict", use_container_width=True, type="primary")
+
+    # ── Run prediction ────────────────────────────────────────────────────────
+    if predict_btn:
+        schedules = ["static", "dynamic", "guided"]
+        rows = [{"N": target_N, "threads": target_threads,
+                 "schedule": s, "chunk": target_chunk} for s in schedules]
+        cand_df = pd.DataFrame(rows)
+        cand_df["predicted_speedup"] = model.predict(cand_df)
+
+        t_seq_est = _estimate_seq_time(target_N, df)
+        cand_df["est_seq_time"]  = round(t_seq_est, 6)
+        cand_df["est_par_time"]  = (t_seq_est / cand_df["predicted_speedup"]).round(6)
+
+        st.session_state["ai_pred"] = {
+            "N":       target_N,
+            "threads": target_threads,
+            "chunk":   target_chunk,
+            "df":      cand_df,
+            "t_seq":   t_seq_est,
+        }
+        st.session_state.pop("ai_validation", None)
+
+    # ── Show predictions ──────────────────────────────────────────────────────
+    if "ai_pred" not in st.session_state:
+        st.markdown("""
+        <div class="card-box" style="text-align:center; padding: 40px 20px; color:#64748B;">
+            <div style="font-size: 36px; margin-bottom: 8px;">🤖</div>
+            <div style="font-size: 14px;">
+                Fill in N, Threads, and Chunk Size above, then click
+                <b style="color:#38BDF8;">Predict</b>.<br>
+                The AI will instantly show predicted speedup and estimated time for all 3 schedulers.
             </div>
         </div>
         """, unsafe_allow_html=True)
+        return
 
-        val_btn = st.button("🔬 Validate Recommendation (Run C Binary)", use_container_width=True, type="primary")
+    p      = st.session_state["ai_pred"]
+    pred_df = p["df"]
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 18px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"""<div class="card-box-header">📊 AI Predictions — N = {p['N']:,} · {p['threads']} Threads · Chunk {p['chunk']}</div>""",
+        unsafe_allow_html=True,
+    )
 
-    # Live Validation Section
-    if val_btn or "run_demo" in st.session_state:
-        if "run_demo" in st.session_state:
-            st.session_state.pop("run_demo", None)
-            st.info("Running Quick Demo Mode Validation on N = 50,000,000...")
+    # Estimated sequential time header metric
+    st.markdown(
+        f"""<div style="font-size:13px; color:#94A3B8; margin-bottom:14px;">
+        Estimated sequential (1-thread) baseline: 
+        <b style="color:#F8FAFC;">{p['t_seq']:.4f}s</b>
+        &nbsp;—&nbsp; parallel times below are what the AI expects given this baseline.
+        </div>""",
+        unsafe_allow_html=True,
+    )
 
-        st.markdown("""<div class="card-box-header">⚡ Live C/OpenMP Execution Validation</div>""", unsafe_allow_html=True)
+    # One row of metrics per scheduler
+    for _, row in pred_df.iterrows():
+        sched  = row["schedule"].upper()
+        sp     = row["predicted_speedup"]
+        t_par  = row["est_par_time"]
+        saving = (1 - t_par / p["t_seq"]) * 100
 
-        with st.spinner(f"Measuring median execution time for N = {target_N:,}..."):
-            t_seq, pi_seq = measure_median_time([SEQ_BIN, str(target_N)])
-            t_par, pi_par = measure_median_time([
-                PAR_BIN, str(target_N), str(int(top_config['threads'])), str(top_config['schedule']), str(int(top_config['chunk']))
-            ])
+        color_map = {"STATIC": "#38BDF8", "DYNAMIC": "#818CF8", "GUIDED": "#10B981"}
+        color = color_map.get(sched, "#F8FAFC")
 
-        if t_seq and t_par:
-            act_speedup = t_seq / t_par
-            act_eff = (act_speedup / int(top_config['threads'])) * 100.0
-            pred_speedup = float(top_config['predicted_speedup'])
-            abs_err = abs(pred_speedup - act_speedup)
-            pct_err = (abs_err / act_speedup) * 100.0
+        st.markdown(
+            f"""<div style="font-size:12px; font-weight:700; color:{color};
+                letter-spacing:.8px; text-transform:uppercase; margin-bottom:4px;">{sched}</div>""",
+            unsafe_allow_html=True,
+        )
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Predicted Speedup",    f"{sp:.2f}×")
+        m2.metric("Est. Parallel Time",   f"{t_par:.4f}s")
+        m3.metric("Est. Sequential Time", f"{p['t_seq']:.4f}s")
+        m4.metric("Time Saving",          f"{saving:.1f}%")
+        st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
 
-            vc1, vc2, vc3, vc4 = st.columns(4)
-            vc1.metric("Predicted Speedup", f"{pred_speedup:.2f}x")
-            vc2.metric("Measured Actual Speedup", f"{act_speedup:.2f}x")
-            vc3.metric("Prediction Absolute Error", f"{abs_err:.4f}")
-            vc4.metric("Percentage Error", f"{pct_err:.2f}%")
+    # Best pick
+    best = pred_df.loc[pred_df["predicted_speedup"].idxmax()]
+    st.markdown(
+        f"""<div class="card-box" style="border-left:4px solid #10B981; margin-top:8px; padding:14px 20px;">
+        <span style="font-size:11px; font-weight:700; color:#10B981; text-transform:uppercase; letter-spacing:1px;">
+        ✦ AI Recommendation
+        </span>
+        <div style="font-size:13px; color:#F8FAFC; margin-top:6px;">
+            Use <b style="color:#10B981;">{best['schedule'].upper()}</b> scheduling —
+            predicted <b>{best['predicted_speedup']:.2f}×</b> speedup,
+            estimated parallel time <b>{best['est_par_time']:.4f}s</b>
+            vs sequential <b>{p['t_seq']:.4f}s</b>.
+        </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
 
-            save_experiment_record({
-                'N': target_N,
-                'threads': int(top_config['threads']),
-                'schedule': str(top_config['schedule']),
-                'chunk': int(top_config['chunk']),
-                'seq_time': round(t_seq, 6),
-                'par_time': round(t_par, 6),
-                'speedup': round(act_speedup, 2),
-                'efficiency': round(act_eff, 1),
-                'predicted_speedup': round(pred_speedup, 2),
-                'error': round(abs_err, 4)
-            })
+    # ── Validate ──────────────────────────────────────────────────────────────
+    st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+    col_v, _ = st.columns([2.2, 3])
+    with col_v:
+        validate_btn = st.button(
+            "▶  Run C Binary & Compare Real vs Predicted",
+            use_container_width=True,
+            type="primary",
+        )
 
-            st.markdown("<br>", unsafe_allow_html=True)
+    if validate_btn:
+        ok, msg = ensure_binaries()
+        if not ok:
+            st.error(msg)
+        else:
+            schedules = ["static", "dynamic", "guided"]
+            results   = []
+            prog = st.progress(0, text="Measuring sequential baseline…")
 
-            # Predicted vs Actual Comparison Bar Chart
-            col_chart, col_explain = st.columns([1.5, 1.0])
+            t_seq_real, _ = measure_median_time([SEQ_BIN, str(p["N"])])
+            if not t_seq_real:
+                st.error("Sequential binary failed. Run `make all`.")
+                prog.empty()
+            else:
+                for i, sched in enumerate(schedules):
+                    prog.progress((i + 1) / len(schedules),
+                                  text=f"Running {sched.upper()}…")
+                    t_par_real, _ = measure_median_time([
+                        PAR_BIN, str(p["N"]),
+                        str(p["threads"]), sched, str(p["chunk"])
+                    ])
+                    if t_par_real:
+                        real_sp   = t_seq_real / t_par_real
+                        pred_row  = pred_df[pred_df["schedule"] == sched].iloc[0]
+                        pred_sp   = pred_row["predicted_speedup"]
+                        err_pct   = abs(pred_sp - real_sp) / real_sp * 100
+                        results.append({
+                            "schedule":       sched,
+                            "pred_speedup":   round(pred_sp, 4),
+                            "real_speedup":   round(real_sp, 4),
+                            "pred_par_time":  round(pred_row["est_par_time"], 6),
+                            "real_par_time":  round(t_par_real, 6),
+                            "error_pct":      round(err_pct, 2),
+                        })
+                        save_experiment_record({
+                            "N":               p["N"],
+                            "threads":         p["threads"],
+                            "schedule":        sched,
+                            "chunk":           p["chunk"],
+                            "seq_time":        round(t_seq_real, 6),
+                            "par_time":        round(t_par_real, 6),
+                            "speedup":         round(real_sp, 2),
+                            "efficiency":      round((real_sp / p["threads"]) * 100, 1),
+                            "predicted_speedup": round(pred_sp, 2),
+                        })
 
-            with col_chart:
-                st.markdown("""<div class="card-box-header">Predicted vs Measured Speedup Comparison</div>""", unsafe_allow_html=True)
-                fig, ax = plt.subplots(figsize=(6, 3.2))
-                fig.patch.set_facecolor('#1E293B')
-                ax.set_facecolor('#0B0F19')
+                prog.empty()
+                if results:
+                    st.session_state["ai_validation"] = {
+                        "results":    results,
+                        "t_seq_real": round(t_seq_real, 6),
+                    }
 
-                bars = ax.bar(['AI Predicted Speedup', 'Measured Speedup'], [pred_speedup, act_speedup], color=['#818CF8', '#34D399'], width=0.4)
-                ax.set_ylabel("Speedup (x Baseline)", color='#94A3B8', fontsize=9)
-                ax.tick_params(colors='#94A3B8', labelsize=9)
-                ax.grid(axis='y', linestyle='--', alpha=0.2, color='#64748B')
-                for spine in ax.spines.values(): spine.set_color('#334155')
+    # ── Validation results ────────────────────────────────────────────────────
+    if "ai_validation" in st.session_state:
+        v = st.session_state["ai_validation"]
 
-                for bar in bars:
-                    yval = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2.0, yval + 0.05, f"{yval:.2f}x", ha='center', va='bottom', color='#F8FAFC', fontweight='bold', fontsize=10)
+        st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+        st.markdown(
+            f"""<div class="card-box-header">✅ Real vs Predicted — Sequential baseline: {v['t_seq_real']}s</div>""",
+            unsafe_allow_html=True,
+        )
 
-                st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
+        color_map = {"static": "#38BDF8", "dynamic": "#818CF8", "guided": "#10B981"}
+        for r in v["results"]:
+            color = color_map.get(r["schedule"], "#F8FAFC")
+            st.markdown(
+                f"""<div style="font-size:12px; font-weight:700; color:{color};
+                    letter-spacing:.8px; text-transform:uppercase; margin-bottom:4px;">
+                    {r['schedule'].upper()}</div>""",
+                unsafe_allow_html=True,
+            )
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("AI Predicted Speedup", f"{r['pred_speedup']:.2f}×")
+            c2.metric("Real Speedup",          f"{r['real_speedup']:.2f}×")
+            c3.metric("AI Est. Time",          f"{r['pred_par_time']:.4f}s")
+            c4.metric("Real Time",             f"{r['real_par_time']:.4f}s")
+            c5.metric("Prediction Error",      f"{r['error_pct']:.1f}%")
+            st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
 
-            with col_explain:
-                st.markdown(f"""
-                <div class="card-box" style="border-left: 4px solid #818CF8;">
-                    <div style="font-size: 13px; font-weight: 700; color: #818CF8;">VALIDATION ANALYSIS</div>
-                    <div style="font-size: 13px; color: #F8FAFC; margin-top: 8px; line-height: 1.5;">
-                        The Random Forest model predicted a speedup of <b>{pred_speedup:.2f}x</b>. 
-                        Live hardware execution of the compiled OpenMP C binary yielded a measured speedup of <b>{act_speedup:.2f}x</b>.
-                    </div>
-                    <div style="font-size: 12px; color: #34D399; margin-top: 10px; font-weight: 600;">
-                        ✓ Validation Error: {pct_err:.2f}% (High Model Fidelity)
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+    # ── Reset ─────────────────────────────────────────────────────────────────
+    if "ai_pred" in st.session_state:
+        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Reset", use_container_width=False):
+            for k in ("ai_pred", "ai_validation"):
+                st.session_state.pop(k, None)
+            st.rerun()
